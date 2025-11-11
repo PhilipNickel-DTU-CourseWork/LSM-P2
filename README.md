@@ -34,9 +34,6 @@ Using uv (recommended):
 uv sync
 ```
 
-Or using pip:
-```bash
-pip install -e .
 ```
 
 ### 4. Run example
