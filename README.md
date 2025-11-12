@@ -126,7 +126,7 @@ mypy src/
 
 ### Change matplotlib style
 
-Edit `src/numutils/styles/ana.mplstyle` or create new style files.
+Edit `src/utils/utils.mplstyle` to customize the plotting style. The style is automatically applied when you import `utils.plotting`, along with the seaborn style.
 
 ### Modify documentation theme
 

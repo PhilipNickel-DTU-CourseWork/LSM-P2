@@ -32,16 +32,3 @@ Numerical integration methods.
    integrate_trapz
    integrate_simpson
 
-Utilities
-=========
-
-Helper functions for plotting and visualization.
-
-.. currentmodule:: numutils.utils
-
-.. autosummary::
-   :toctree: generated
-   :nosignatures:
-
-   setup_plotting
-

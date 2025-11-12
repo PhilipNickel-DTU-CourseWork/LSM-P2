@@ -21,6 +21,7 @@ dependencies = [
   "pandas>=2.0.0",
   "pyarrow>=14.0.0",
   "scipy>=1.11.0",
+  "seaborn>=0.12.0",
   # Documentation dependencies
   "sphinx>=7.0.0",
   "pydata-sphinx-theme>=0.14.0",

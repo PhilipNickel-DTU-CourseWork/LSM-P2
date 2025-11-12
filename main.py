@@ -7,11 +7,44 @@ import sys
 from pathlib import Path
 
 
+def get_repo_root() -> Path:
+    """Get repository root directory.
+
+    Returns the repository root by detecting the presence of pyproject.toml.
+    Works from any subdirectory of the repository.
+
+    Returns
+    -------
+    Path
+        Absolute path to the repository root
+
+    """
+    # Start from this script's location
+    current = Path(__file__).resolve().parent
+
+    # Walk up until we find pyproject.toml (marks repo root)
+    for parent in [current] + list(current.parents):
+        if (parent / "pyproject.toml").exists():
+            return parent
+
+    # Fallback: assume script is in repo root
+    return current
+
+
+# Get repo root once at module level
+REPO_ROOT = get_repo_root()
+
+
 def discover_scripts():
-    """Find all Python scripts in Examples/ directory."""
+    """Find all Python scripts in Experiments/ directory."""
+    experiments_dir = REPO_ROOT / "Experiments"
+
+    if not experiments_dir.exists():
+        return [], []
+
     scripts = [
         p
-        for p in Path("Examples").rglob("*.py")
+        for p in experiments_dir.rglob("*.py")
         if p.is_file() and p.name != "__init__.py"
     ]
 
@@ -33,30 +66,32 @@ def run_scripts(scripts):
     fail_count = 0
 
     for script in scripts:
+        # Display path relative to repo root
+        display_path = script.relative_to(REPO_ROOT)
+
         try:
             result = subprocess.run(
                 ["uv", "run", "python", str(script)],
                 capture_output=True,
                 text=True,
                 timeout=180,
+                cwd=str(REPO_ROOT),  # Run from repo root
             )
 
             if result.returncode == 0:
-                print(f"  ✓ {script.relative_to('Examples')}")
+                print(f"  ✓ {display_path}")
                 success_count += 1
             else:
-                print(
-                    f"  ✗ {script.relative_to('Examples')} (exit {result.returncode})"
-                )
+                print(f"  ✗ {display_path} (exit {result.returncode})")
                 if result.stderr:
                     print(f"    Error: {result.stderr[:200]}")
                 fail_count += 1
 
         except subprocess.TimeoutExpired:
-            print(f"  ✗ {script.relative_to('Examples')} (timeout)")
+            print(f"  ✗ {display_path} (timeout)")
             fail_count += 1
         except Exception as e:
-            print(f"  ✗ {script.relative_to('Examples')} ({e})")
+            print(f"  ✗ {display_path} ({e})")
             fail_count += 1
 
     print(f"\n  Summary: {success_count} succeeded, {fail_count} failed\n")
@@ -64,7 +99,7 @@ def run_scripts(scripts):
 
 def build_docs():
     """Build Sphinx documentation."""
-    docs_dir = Path("docs")
+    docs_dir = REPO_ROOT / "docs"
     source_dir = docs_dir / "source"
     build_dir = docs_dir / "build"
 
@@ -88,6 +123,7 @@ def build_docs():
             capture_output=True,
             text=True,
             timeout=300,
+            cwd=str(REPO_ROOT),
         )
 
         if result.returncode == 0:
@@ -115,7 +151,7 @@ def clean_docs():
     """Clean built Sphinx documentation."""
     import shutil
 
-    build_dir = Path("docs/build")
+    build_dir = REPO_ROOT / "docs" / "build"
 
     print("\nCleaning Sphinx documentation...")
 
@@ -125,7 +161,7 @@ def clean_docs():
 
     try:
         shutil.rmtree(build_dir)
-        print(f"  ✓ Cleaned {build_dir}\n")
+        print(f"  ✓ Cleaned {build_dir.relative_to(REPO_ROOT)}\n")
     except Exception as e:
         print(f"  ✗ Failed to clean documentation: {e}\n")
 
@@ -139,46 +175,45 @@ def clean_all():
     cleaned = []
     failed = []
 
-    # List of paths to clean
+    # List of paths to clean (relative to repo root)
     clean_targets = [
-        "docs/build",
-        "docs/source/example_gallery",
-        "docs/source/generated",
-        "build",
-        "dist",
-        ".pytest_cache",
-        ".ruff_cache",
-        ".mypy_cache",
+        REPO_ROOT / "docs" / "build",
+        REPO_ROOT / "docs" / "source" / "example_gallery",
+        REPO_ROOT / "docs" / "source" / "generated",
+        REPO_ROOT / "build",
+        REPO_ROOT / "dist",
+        REPO_ROOT / ".pytest_cache",
+        REPO_ROOT / ".ruff_cache",
+        REPO_ROOT / ".mypy_cache",
     ]
 
     # Clean directories
-    for target in clean_targets:
-        target_path = Path(target)
+    for target_path in clean_targets:
         if target_path.exists():
             try:
                 shutil.rmtree(target_path)
-                cleaned.append(str(target_path))
+                cleaned.append(str(target_path.relative_to(REPO_ROOT)))
             except Exception as e:
-                failed.append(f"{target_path}: {e}")
+                failed.append(f"{target_path.relative_to(REPO_ROOT)}: {e}")
 
     # Clean __pycache__ directories
-    for pycache in Path(".").rglob("__pycache__"):
+    for pycache in REPO_ROOT.rglob("__pycache__"):
         try:
             shutil.rmtree(pycache)
-            cleaned.append(str(pycache))
+            cleaned.append(str(pycache.relative_to(REPO_ROOT)))
         except Exception as e:
-            failed.append(f"{pycache}: {e}")
+            failed.append(f"{pycache.relative_to(REPO_ROOT)}: {e}")
 
     # Clean .pyc files
-    for pyc in Path(".").rglob("*.pyc"):
+    for pyc in REPO_ROOT.rglob("*.pyc"):
         try:
             pyc.unlink()
-            cleaned.append(str(pyc))
+            cleaned.append(str(pyc.relative_to(REPO_ROOT)))
         except Exception as e:
-            failed.append(f"{pyc}: {e}")
+            failed.append(f"{pyc.relative_to(REPO_ROOT)}: {e}")
 
     # Clean data directory (but keep README.md)
-    data_dir = Path("data")
+    data_dir = REPO_ROOT / "data"
     if data_dir.exists():
         for item in data_dir.iterdir():
             if item.name != "README.md" and item.name != ".gitkeep":
@@ -187,9 +222,9 @@ def clean_all():
                         shutil.rmtree(item)
                     else:
                         item.unlink()
-                    cleaned.append(str(item))
+                    cleaned.append(str(item.relative_to(REPO_ROOT)))
                 except Exception as e:
-                    failed.append(f"{item}: {e}")
+                    failed.append(f"{item.relative_to(REPO_ROOT)}: {e}")
 
     # Print results
     if cleaned:
@@ -213,6 +248,7 @@ def ruff_check():
             capture_output=True,
             text=True,
             timeout=60,
+            cwd=str(REPO_ROOT),
         )
 
         print(result.stdout)
@@ -247,6 +283,7 @@ def ruff_format():
             capture_output=True,
             text=True,
             timeout=60,
+            cwd=str(REPO_ROOT),
         )
 
         print(result.stdout)

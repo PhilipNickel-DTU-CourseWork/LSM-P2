@@ -62,7 +62,7 @@ numpydoc_use_plots = False  # Don't auto-generate plots from Examples
 # -- Sphinx Gallery configuration --------------------------------------------
 
 sphinx_gallery_conf = {
-    "examples_dirs": "../../Examples",  # Path to example scripts
+    "examples_dirs": "../../Experiments",  # Path to example scripts
     "gallery_dirs": "example_gallery",  # Output directory for gallery
     "filename_pattern": "/plot_",  # Pattern to match which scripts to execute
     "download_all_examples": False,  # No download buttons

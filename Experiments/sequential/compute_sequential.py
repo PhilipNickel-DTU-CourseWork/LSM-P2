@@ -2,8 +2,12 @@ from argparse import ArgumentParser
 import math
 from time import perf_counter as time
 import numpy as np
+from pathlib import Path
+import pandas as pd
 
-#from numba import njit
+from utils import get_data_dir
+
+# from numba import njit
 
 
 # Create the argument-parser for easier arguments!
@@ -16,7 +20,9 @@ parser.add_argument(
     help="Number of divisions along each of the 3 dimensions",
 )
 parser.add_argument("--iter", type=int, default=20, help="Number of (max) iterations.")
-parser.add_argument("-v0", "--value0", type=float, default=0., help="The initial value of the grid u")
+parser.add_argument(
+    "-v0", "--value0", type=float, default=0.0, help="The initial value of the grid u"
+)
 parser.add_argument(
     "--tolerance",
     type=float,
@@ -24,11 +30,10 @@ parser.add_argument(
     help="The tolerance of the normalized Frobenius norm of the residual for the convergence.",
 )
 parser.add_argument(
-    "--save-slice",
-    nargs=3,
-    metavar=["axis", "pos", "FILE"],
+    "--output",
+    type=str,
     default=None,
-    help="Store an image of a slice (pos in [-1;1])",
+    help="Output filename for saving results (default: data/results_N{N}_iter{iter}_{method}.npz)",
 )
 
 # Add your methods
@@ -39,12 +44,6 @@ parser.add_argument(
     choices=methods,
     default=methods[0],
     help="The chosen method to solve the Poisson problem.",
-)
-
-parser.add_argument(
-    "--plot_convergence",
-    action="store_true",
-    help="Plot the convergence of the residual over iterations.",
 )
 
 
@@ -62,7 +61,9 @@ In the below code, we'll have the axes aligned as z, y, x.
 
 
 # Define the different methods
-def step_view(uold: np.ndarray, u: np.ndarray, f: np.ndarray, h: float, omega: float = 0.75) -> float:
+def step_view(
+    uold: np.ndarray, u: np.ndarray, f: np.ndarray, h: float, omega: float = 0.75
+) -> float:
     """Run a single Poisson step using the *view* method"""
 
     # The stencil weight
@@ -70,33 +71,25 @@ def step_view(uold: np.ndarray, u: np.ndarray, f: np.ndarray, h: float, omega: f
     h2: float = h * h
     N: int = u.shape[0] - 2
 
-    u[1:-1, 1:-1, 1:-1] = omega * c * (uold[0:-2, 1:-1, 1:-1] + uold[2:, 1:-1, 1:-1] + uold[1:-1, 0:-2, 1:-1] + uold[1:-1, 2:, 1:-1] + uold[1:-1, 1:-1, 0:-2] + uold[1:-1, 1:-1, 2:] + h2 * f[1:-1, 1:-1, 1:-1])
+    u[1:-1, 1:-1, 1:-1] = (
+        omega
+        * c
+        * (
+            uold[0:-2, 1:-1, 1:-1]
+            + uold[2:, 1:-1, 1:-1]
+            + uold[1:-1, 0:-2, 1:-1]
+            + uold[1:-1, 2:, 1:-1]
+            + uold[1:-1, 1:-1, 0:-2]
+            + uold[1:-1, 1:-1, 2:]
+            + h2 * f[1:-1, 1:-1, 1:-1]
+        )
+    )
 
     return math.sqrt(np.sum((u - uold) ** 2)) / N**3
 
 
-
-def plot_slice(filename: str, axis: str, pos, u: np.ndarray) -> None:
-    """Create a slice of the grid and store it to a matplotlib file"""
-    from matplotlib import pyplot as plt
-
-    # get axis specification
-    axis: int = "z2y1x0".index(axis.lower()) // 2
-
-    pos = float(pos)
-    N = u.shape[axis]
-    idx: int = int(math.floor(N * (pos + 1) / 2))
-
-    # For debugging purposes:
-    #print(axis, pos, idx)
-    uslice = np.take(u, idx, axis=axis)
-    plt.imshow(uslice.T, vmin=-1, vmax=1, extent=(-1, 1, -1, 1))
-    plt.colorbar()
-    plt.savefig(filename)
-
-
 # Allocate the matrices
-h: float = 2.0 / (N-1)
+h: float = 2.0 / (N - 1)
 u1: np.ndarray = np.full([N, N, N], options.value0, dtype=np.float64)
 u1[[0, -1], :, :] = 0
 u1[:, [0, -1], :] = 0
@@ -107,12 +100,12 @@ f: np.ndarray = np.zeros_like(u1)
 u2: np.ndarray = u1.copy()
 
 # Create f using broadcasting
-xs, ys, zs = np.ogrid[-1:1:complex(N), -1:1:complex(N), -1:1:complex(N)]
+xs, ys, zs = np.ogrid[-1 : 1 : complex(N), -1 : 1 : complex(N), -1 : 1 : complex(N)]
 f[:] = 2 * np.pi**2 * np.sin(np.pi * xs) * np.sin(np.pi * ys) * np.sin(np.pi * zs)
 
 
 def validate(u: np.ndarray, u_true: np.ndarray) -> float:
-    """ 
+    """
     Validate the grid result using simple bool check.
     Relative tolerance: 1e-6
     Absolute tolerance: 1e-8
@@ -122,23 +115,7 @@ def validate(u: np.ndarray, u_true: np.ndarray) -> float:
 
     return diff_true
 
-def plot_convergence(diff_true, type1: str):
-    """Plot the convergence of the residual over iterations."""
-    from matplotlib import pyplot as plt
 
-    plt.semilogy(diff_true, marker='o')
-    plt.xlabel("Iteration")
-    plt.ylabel("Residual")
-    if type1 == "residual":
-        plt.title("Convergence to true solution")
-        plt.grid(True)
-        plt.savefig("convergence_true.png")
-        plt.close()
-    else:
-        plt.title("Convergence of difference between steps")
-        plt.grid(True)
-        plt.savefig("convergence_step.png")
-        plt.close()
 # Retrieve the method that we'll use for solving the Poisson problem
 step = globals()[f"step_{method}"]
 
@@ -149,8 +126,8 @@ t0 = time()
 diff = i = -1
 
 # Initialize the true solution for validation
-xs, ys, zs = np.ogrid[-1:1:complex(N), -1:1:complex(N), -1:1:complex(N)]
-u_true = np.sin(np.pi*xs) * np.sin(np.pi*ys) * np.sin(np.pi*zs)
+xs, ys, zs = np.ogrid[-1 : 1 : complex(N), -1 : 1 : complex(N), -1 : 1 : complex(N)]
+u_true = np.sin(np.pi * xs) * np.sin(np.pi * ys) * np.sin(np.pi * zs)
 diff_step = []
 diff_true = []
 
@@ -172,10 +149,10 @@ for i in range(N_iter):
     diff_step.append(step(uold, u, f, h))
     diff_true.append(validate(u, u_true))
 
-    #if diff < tolerance:
-        # after this point, we know that `u` contains
-        # the result, in any case
-        # so we can safely break
+    # if diff < tolerance:
+    # after this point, we know that `u` contains
+    # the result, in any case
+    # so we can safely break
     #    print("ended by tolerance check")
     #    break
 
@@ -184,13 +161,39 @@ t1 = time()
 
 # Determine the actual number of iterations run
 iter_run = i + 1
-print("time = ", t1 - t0)
+elapsed_time = t1 - t0
+print("time = ", elapsed_time)
 print(f"iterations = {iter_run}")
 
-if options.save_slice:
-    axis, pos, filename = options.save_slice
-    plot_slice(filename, axis, pos, u)
+# Create DataFrame with convergence data
+df = pd.DataFrame({
+    'iteration': range(iter_run),
+    'diff_step': diff_step,
+    'diff_true': diff_true,
+})
 
-if options.plot_convergence:
-    plot_convergence(diff_true, "residual")
-    plot_convergence(diff_step, "step")
+# Add metadata columns
+df['N'] = N
+df['method'] = method
+df['tolerance'] = tolerance
+df['elapsed_time'] = elapsed_time
+df['iter_run'] = iter_run
+
+# Save results to data directory (automatically mirrors Experiments/ structure)
+data_dir = get_data_dir()
+
+if options.output:
+    base_name = options.output.replace('.npz', '').replace('.parquet', '')
+    output_file = data_dir / f"{base_name}.parquet"
+    grid_file = data_dir / f"{base_name}_grid.npy"
+else:
+    output_file = data_dir / f"results_N{N}_iter{iter_run}_{method}.parquet"
+    grid_file = data_dir / f"results_N{N}_iter{iter_run}_{method}_grid.npy"
+
+# Save convergence data as parquet
+df.to_parquet(output_file, index=False)
+print(f"Results saved to: {output_file}")
+
+# Save the 3D grid separately for slice plotting
+np.save(grid_file, u)
+print(f"Grid saved to: {grid_file}")

@@ -1,8 +1,29 @@
-"""Plotting utilities for spectral method visualizations."""
+"""Plotting utilities for spectral method visualizations.
+
+Automatically applies seaborn style and custom utils.mplstyle on import.
+"""
 
 from __future__ import annotations
 
 from pathlib import Path
+
+import matplotlib.pyplot as plt
+
+
+# Auto-apply plotting styles on import
+def _apply_styles():
+    """Apply seaborn style and custom utils.mplstyle."""
+    # Apply seaborn style first
+    plt.style.use("seaborn-v0_8")
+
+    # Then apply custom style on top
+    style_path = Path(__file__).parent / "utils.mplstyle"
+    if style_path.exists():
+        plt.style.use(str(style_path))
+
+
+# Apply styles when module is imported
+_apply_styles()
 
 
 def get_repo_root() -> Path:

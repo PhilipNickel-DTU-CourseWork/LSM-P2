@@ -6,7 +6,7 @@
 
 Computation times
 =================
-**00:03.855** total execution time for 2 files **from all galleries**:
+**00:02.456** total execution time for 2 files **from all galleries**:
 
 .. container::
 
@@ -32,9 +32,9 @@ Computation times
    * - Example
      - Time
      - Mem (MB)
-   * - :ref:`sphx_glr_example_gallery_example_integration_plot_integration.py` (``../../Examples/example_integration/plot_integration.py``)
-     - 00:03.855
+   * - :ref:`sphx_glr_example_gallery_example_integration_plot_integration.py` (``../../Experiments/example_integration/plot_integration.py``)
+     - 00:02.456
      - 0.0
-   * - :ref:`sphx_glr_example_gallery_example_integration_compute.py` (``../../Examples/example_integration/compute.py``)
+   * - :ref:`sphx_glr_example_gallery_example_integration_compute.py` (``../../Experiments/example_integration/compute.py``)
      - 00:00.000
      - 0.0
