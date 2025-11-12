@@ -6,6 +6,7 @@ from pathlib import Path
 import pandas as pd
 
 from utils import datatools
+from LSM import JacobiSolver
 
 # from numba import njit
 
@@ -36,14 +37,13 @@ parser.add_argument(
     help="Output filename for saving results (default: data/results_N{N}_iter{iter}_{method}.npz)",
 )
 
-# Add your methods
-# For each method the corresponding "step_{}" should exist.
-methods = ["view"]
+# Available solver methods
+methods = ["jacobi", "view"]  # "view" is alias for "jacobi"
 parser.add_argument(
     "--method",
     choices=methods,
     default=methods[0],
-    help="The chosen method to solve the Poisson problem.",
+    help="The chosen method to solve the Poisson problem (default: jacobi).",
 )
 
 
@@ -58,35 +58,6 @@ tolerance: float = options.tolerance
 """
 In the below code, we'll have the axes aligned as z, y, x.
 """
-
-
-# Define the different methods
-def step_view(
-    uold: np.ndarray, u: np.ndarray, f: np.ndarray, h: float, omega: float = 0.75
-) -> float:
-    """Run a single Poisson step using the *view* method"""
-
-    # The stencil weight
-    c: float = 1.0 / 6.0
-    h2: float = h * h
-    N: int = u.shape[0] - 2
-
-    u[1:-1, 1:-1, 1:-1] = (
-        omega
-        * c
-        * (
-            uold[0:-2, 1:-1, 1:-1]
-            + uold[2:, 1:-1, 1:-1]
-            + uold[1:-1, 0:-2, 1:-1]
-            + uold[1:-1, 2:, 1:-1]
-            + uold[1:-1, 1:-1, 0:-2]
-            + uold[1:-1, 1:-1, 2:]
-            + h2 * f[1:-1, 1:-1, 1:-1]
-        )
-    )
-
-    return math.sqrt(np.sum((u - uold) ** 2)) / N**3
-
 
 # Allocate the matrices
 h: float = 2.0 / (N - 1)
@@ -104,66 +75,33 @@ xs, ys, zs = np.ogrid[-1 : 1 : complex(N), -1 : 1 : complex(N), -1 : 1 : complex
 f[:] = 2 * np.pi**2 * np.sin(np.pi * xs) * np.sin(np.pi * ys) * np.sin(np.pi * zs)
 
 
-def validate(u: np.ndarray, u_true: np.ndarray) -> float:
-    """
-    Validate the grid result using simple bool check.
-    Relative tolerance: 1e-6
-    Absolute tolerance: 1e-8
-    """
-    N = u.shape[0]
-    diff_true = math.sqrt(np.sum((u - u_true) ** 2)) / N**3
-
-    return diff_true
-
-
-# Retrieve the method that we'll use for solving the Poisson problem
-step = globals()[f"step_{method}"]
-
-# Preset the *result* array!
-# Just in case the first run is not used...
-u = u2.view()
-t0 = time()
-diff = i = -1
-
 # Initialize the true solution for validation
 xs, ys, zs = np.ogrid[-1 : 1 : complex(N), -1 : 1 : complex(N), -1 : 1 : complex(N)]
 u_true = np.sin(np.pi * xs) * np.sin(np.pi * ys) * np.sin(np.pi * zs)
-diff_step = []
-diff_true = []
 
-# Run the Poisson problem until either of these are true:
-# 1. Maximum number of iterations is met.
-# 2. The residual falls below the tolerance.
-for i in range(N_iter):
-    if i == 1:
-        t0 = time()
+# Create solver instance
+solver = JacobiSolver(omega=0.75, use_numba=False, verbose=False)
 
-    # Swapping pointers
-    if i % 2 == 0:
-        uold = u1.view()
-        u = u2.view()
-    else:
-        u = u1.view()
-        uold = u2.view()
+# Optional: warmup for numba (if enabled)
+# solver.warmup(N=10)
 
-    diff_step.append(step(uold, u, f, h))
-    diff_true.append(validate(u, u_true))
-
-    # if diff < tolerance:
-    # after this point, we know that `u` contains
-    # the result, in any case
-    # so we can safely break
-    #    print("ended by tolerance check")
-    #    break
-
-
+# Run the solver
+t0 = time()
+result = solver.solve(u1, u2, f, h, N_iter, tolerance, u_true=u_true)
 t1 = time()
 
-# Determine the actual number of iterations run
-iter_run = i + 1
+# Extract results
+u = result["u"]
+iter_run = result["iterations"]
+diff_step = result["diff_step"]
+diff_true = result["diff_true"]
+converged = result["converged"]
 elapsed_time = t1 - t0
+
 print("time = ", elapsed_time)
 print(f"iterations = {iter_run}")
+if converged:
+    print(f"Converged within tolerance {tolerance}")
 
 # Create DataFrame with convergence data
 df = pd.DataFrame({
@@ -178,6 +116,7 @@ df['method'] = method
 df['tolerance'] = tolerance
 df['elapsed_time'] = elapsed_time
 df['iter_run'] = iter_run
+df['converged'] = converged
 
 # Save results to data directory (automatically mirrors Experiments/ structure)
 data_dir = datatools.get_data_dir()
