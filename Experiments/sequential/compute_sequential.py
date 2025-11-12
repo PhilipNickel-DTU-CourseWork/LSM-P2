@@ -1,51 +1,28 @@
-from argparse import ArgumentParser
 import math
 from time import perf_counter as time
 import numpy as np
 from pathlib import Path
 import pandas as pd
 
-from utils import datatools
-from LSM import JacobiSolver
-
-# from numba import njit
-
-
-# Create the argument-parser for easier arguments!
-parser = ArgumentParser(description="Poisson problem")
-
-parser.add_argument(
-    "-N",
-    type=int,
-    default=100,
-    help="Number of divisions along each of the 3 dimensions",
-)
-parser.add_argument("--iter", type=int, default=20, help="Number of (max) iterations.")
-parser.add_argument(
-    "-v0", "--value0", type=float, default=0.0, help="The initial value of the grid u"
-)
-parser.add_argument(
-    "--tolerance",
-    type=float,
-    default=1e-8,
-    help="The tolerance of the normalized Frobenius norm of the residual for the convergence.",
-)
-parser.add_argument(
-    "--output",
-    type=str,
-    default=None,
-    help="Output filename for saving results (default: data/results_N{N}_iter{iter}_{method}.npz)",
+from utils import datatools, cli
+from LSM import (
+    SequentialJacobi,
+    setup_sinusoidal_problem,
+    sinusoidal_exact_solution,
 )
 
-# Available solver methods
-methods = ["jacobi", "view"]  # "view" is alias for "jacobi"
-parser.add_argument(
-    "--method",
-    choices=methods,
-    default=methods[0],
-    help="The chosen method to solve the Poisson problem (default: jacobi).",
-)
+# Available solvers for future experiments:
+# - SequentialJacobi(use_numba=False): Pure numpy (baseline)
+# - SequentialJacobi(use_numba=True): JIT-compiled with numba
+# - MPIJacobiCubic: MPI with 3D cubic decomposition (TODO)
+# - MPIJacobiSliced: MPI with 1D sliced decomposition (TODO)
 
+# Create the argument parser using shared utility
+parser = cli.create_parser(
+    methods=["jacobi", "view"],  # "view" is alias for "jacobi"
+    default_method="jacobi",
+    description="Sequential Poisson problem solver",
+)
 
 # Grab options!
 options = parser.parse_args()
@@ -59,79 +36,63 @@ tolerance: float = options.tolerance
 In the below code, we'll have the axes aligned as z, y, x.
 """
 
-# Allocate the matrices
-h: float = 2.0 / (N - 1)
-u1: np.ndarray = np.full([N, N, N], options.value0, dtype=np.float64)
-u1[[0, -1], :, :] = 0
-u1[:, [0, -1], :] = 0
-u1[:, :, [0, -1]] = 0
-f: np.ndarray = np.zeros_like(u1)
+# Set up the test problem using LSM
+u1, u2, f, h = setup_sinusoidal_problem(N, initial_value=options.value0)
 
-# The boundary conditions are 0 on all edges.
-u2: np.ndarray = u1.copy()
+# Get the exact solution for validation
+u_true = sinusoidal_exact_solution(N)
 
-# Create f using broadcasting
-xs, ys, zs = np.ogrid[-1 : 1 : complex(N), -1 : 1 : complex(N), -1 : 1 : complex(N)]
-f[:] = 2 * np.pi**2 * np.sin(np.pi * xs) * np.sin(np.pi * ys) * np.sin(np.pi * zs)
+# Create solver instance (using pure numpy version)
+# For numba acceleration, use: solver = SequentialJacobi(omega=0.75, verbose=False, use_numba=True)
+solver = SequentialJacobi(omega=0.75, verbose=False)
 
-
-# Initialize the true solution for validation
-xs, ys, zs = np.ogrid[-1 : 1 : complex(N), -1 : 1 : complex(N), -1 : 1 : complex(N)]
-u_true = np.sin(np.pi * xs) * np.sin(np.pi * ys) * np.sin(np.pi * zs)
-
-# Create solver instance
-solver = JacobiSolver(omega=0.75, use_numba=False, verbose=False)
-
-# Optional: warmup for numba (if enabled)
+# Optional: warmup for numba (if use_numba=True)
 # solver.warmup(N=10)
 
 # Run the solver
-t0 = time()
-result = solver.solve(u1, u2, f, h, N_iter, tolerance, u_true=u_true)
-t1 = time()
+u, runtime_config, global_results, per_rank_results = solver.solve(u1, u2, f, h, N_iter, tolerance, u_true=u_true)
 
-# Extract results
-u = result["u"]
-iter_run = result["iterations"]
-diff_step = result["diff_step"]
-diff_true = result["diff_true"]
-converged = result["converged"]
-elapsed_time = t1 - t0
+print(f"Wall time = {per_rank_results['wall_time']:.6f} s")
+print(f"Compute time = {per_rank_results['compute_time']:.6f} s")
+print(f"MPI comm time = {per_rank_results['mpi_comm_time']:.6f} s")
+print(f"Iterations = {global_results['iterations']}")
+if global_results["converged"]:
+    print(f"Converged within tolerance {runtime_config['tolerance']}")
+if "final_error" in global_results:
+    print(f"Final error = {global_results['final_error']:.6e}")
 
-print("time = ", elapsed_time)
-print(f"iterations = {iter_run}")
-if converged:
-    print(f"Converged within tolerance {tolerance}")
-
-# Create DataFrame with convergence data
-df = pd.DataFrame({
-    'iteration': range(iter_run),
-    'diff_step': diff_step,
-    'diff_true': diff_true,
-})
-
-# Add metadata columns
-df['N'] = N
-df['method'] = method
-df['tolerance'] = tolerance
-df['elapsed_time'] = elapsed_time
-df['iter_run'] = iter_run
-df['converged'] = converged
+# Create DataFrames (single row each, MLflow-compatible)
+df_runtime_config = pd.DataFrame([runtime_config])
+df_global_results = pd.DataFrame([global_results])
+df_per_rank_results = pd.DataFrame([per_rank_results])
 
 # Save results to data directory (automatically mirrors Experiments/ structure)
 data_dir = datatools.get_data_dir()
 
 if options.output:
     base_name = options.output.replace('.npz', '').replace('.parquet', '')
-    output_file = data_dir / f"{base_name}.parquet"
+    config_file = data_dir / f"{base_name}_config.parquet"
+    global_file = data_dir / f"{base_name}_global.parquet"
+    perrank_file = data_dir / f"{base_name}_perrank.parquet"
     grid_file = data_dir / f"{base_name}_grid.npy"
 else:
-    output_file = data_dir / f"results_N{N}_iter{iter_run}_{method}.parquet"
-    grid_file = data_dir / f"results_N{N}_iter{iter_run}_{method}_grid.npy"
+    iter_run = global_results["iterations"]
+    config_file = data_dir / f"run_N{N}_iter{iter_run}_{method}_config.parquet"
+    global_file = data_dir / f"run_N{N}_iter{iter_run}_{method}_global.parquet"
+    perrank_file = data_dir / f"run_N{N}_iter{iter_run}_{method}_perrank.parquet"
+    grid_file = data_dir / f"run_N{N}_iter{iter_run}_{method}_grid.npy"
 
-# Save convergence data as parquet
-df.to_parquet(output_file, index=False)
-print(f"Results saved to: {output_file}")
+# Save global runtime configuration (same for all ranks)
+df_runtime_config.to_parquet(config_file, index=False)
+print(f"Config saved to: {config_file}")
+
+# Save global solver results (convergence, quality metrics)
+df_global_results.to_parquet(global_file, index=False)
+print(f"Global results saved to: {global_file}")
+
+# Save per-rank results (performance data)
+df_per_rank_results.to_parquet(perrank_file, index=False)
+print(f"Per-rank results saved to: {perrank_file}")
 
 # Save the 3D grid separately for slice plotting
 np.save(grid_file, u)
