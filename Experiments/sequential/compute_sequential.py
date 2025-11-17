@@ -5,7 +5,7 @@ from pathlib import Path
 import pandas as pd
 
 from utils import datatools, cli
-from LSM import (
+from Poisson import (
     SequentialJacobi,
     setup_sinusoidal_problem,
     sinusoidal_exact_solution,
@@ -43,14 +43,20 @@ u1, u2, f, h = setup_sinusoidal_problem(N, initial_value=options.value0)
 u_true = sinusoidal_exact_solution(N)
 
 # Create solver instance (using pure numpy version)
-# For numba acceleration, use: solver = SequentialJacobi(omega=0.75, verbose=False, use_numba=True)
-solver = SequentialJacobi(omega=0.75, verbose=False)
+# For numba acceleration, use: solver = SequentialJacobi(omega=0.75, use_numba=True)
+solver = SequentialJacobi(omega=0.75)
 
 # Optional: warmup for numba (if use_numba=True)
 # solver.warmup(N=10)
 
+# Start MLflow logging
+solver.mlflow_start_log("/Shared/sequential_poisson_solver", N, N_iter, tolerance)
+
 # Run the solver
 u, runtime_config, global_results, per_rank_results = solver.solve(u1, u2, f, h, N_iter, tolerance, u_true=u_true)
+
+# End MLflow logging
+solver.mlflow_end_log()
 
 print(f"Wall time = {per_rank_results.wall_time:.6f} s")
 print(f"Compute time = {per_rank_results.compute_time:.6f} s")

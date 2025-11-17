@@ -33,7 +33,7 @@ class SequentialJacobi(PoissonSolver):
             residual = self._step(uold, u, f, h, self.config.omega)
             t_comp_end = time.perf_counter()
             compute_times.append(t_comp_end - t_comp_start)
-            residual_history.append(residual)
+            residual_history.append(float(residual))
 
             # Check convergence
             if residual < tolerance:
@@ -45,21 +45,24 @@ class SequentialJacobi(PoissonSolver):
         # Compute error
         final_error = 0.0
         if u_true is not None:
-            final_error = np.linalg.norm(u - u_true)
+            final_error = float(np.linalg.norm(u - u_true))
+
+        # Update config with method
+        self.config.method = "sequential_jacobi"
 
         # Build results
         runtime_config = RuntimeConfig(
             N=N,
+            mpi_size=self.config.mpi_size,
             method="sequential_jacobi",
             omega=self.config.omega,
             tolerance=tolerance,
             max_iter=max_iter,
             use_numba=self.config.use_numba,
-            num_threads=self.get_num_threads(self.config.use_numba),
-            mpi_ranks=1,
+            num_threads=self.config.num_threads,
         )
 
-        global_results = GlobalResults(
+        self.global_results = GlobalResults(
             iterations=i + 1,
             residual_history=residual_history,
             converged=converged,
@@ -67,14 +70,19 @@ class SequentialJacobi(PoissonSolver):
             wall_time=elapsed_time,
             compute_time=sum(compute_times),
             mpi_comm_time=0.0,
+            halo_exchange_time=0.0,
         )
 
-        per_rank_results = PerRankResults(
+        self.per_rank_results = PerRankResults(
             mpi_rank=0,
             hostname=socket.gethostname(),
             wall_time=elapsed_time,
             compute_time=sum(compute_times),
             mpi_comm_time=0.0,
+            halo_exchange_time=0.0,
         )
 
-        return u, runtime_config, global_results, per_rank_results
+        # Store all per-rank results for MLflow logging (single rank for sequential)
+        self.all_per_rank_results = [self.per_rank_results]
+
+        return u, runtime_config, self.global_results, self.per_rank_results

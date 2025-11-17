@@ -16,10 +16,22 @@ class MPIJacobiSliced(PoissonSolver):
         self.comm = MPI.COMM_WORLD
         self.rank = self.comm.Get_rank()
         self.size = self.comm.Get_size()
+        self.plane_type = None  # MPI datatype for 2D plane
+
+    def _create_plane_datatype(self, N):
+        """Create MPI datatype for a 2D plane."""
+        if self.plane_type is None:
+            # Create subarray type for a single YZ plane
+            self.plane_type = MPI.DOUBLE.Create_contiguous(N * N)
+            self.plane_type.Commit()
+        return self.plane_type
 
     def solve(self, u1, u2, f, h, max_iter, tolerance=1e-8, u_true=None):
         """Solve using MPI sliced Jacobi iteration."""
         N = u1.shape[0]
+
+        # Create MPI datatype for plane communication
+        self._create_plane_datatype(N)
 
         # Setup local arrays
         u1_local, u2_local, f_local = self._setup_local_arrays(u1, u2, f, N)
@@ -27,6 +39,7 @@ class MPIJacobiSliced(PoissonSolver):
         converged = False
         compute_times = []
         comm_times = []
+        halo_times = []
         residual_history = []
         t_start = time.perf_counter()
 
@@ -38,7 +51,7 @@ class MPIJacobiSliced(PoissonSolver):
                 u_local, uold_local = u1_local, u2_local
 
             # Exchange boundaries
-            self._exchange_boundaries(uold_local, compute_times, comm_times)
+            self._exchange_boundaries(uold_local, halo_times)
 
             # Jacobi step
             t_comp_start = time.perf_counter()
@@ -52,7 +65,7 @@ class MPIJacobiSliced(PoissonSolver):
             global_residual = np.sqrt(global_residual)
             t_comm_end = time.perf_counter()
             comm_times.append(t_comm_end - t_comm_start)
-            residual_history.append(global_residual)
+            residual_history.append(float(global_residual))
 
             # Check convergence
             if global_residual < tolerance:
@@ -67,7 +80,7 @@ class MPIJacobiSliced(PoissonSolver):
         # Compute error on rank 0 and broadcast
         final_error = 0.0
         if self.rank == 0 and u_true is not None:
-            final_error = np.linalg.norm(u_global - u_true)
+            final_error = float(np.linalg.norm(u_global - u_true))
         final_error = self.comm.bcast(final_error, root=0)
 
         # Build per-rank results
@@ -77,10 +90,18 @@ class MPIJacobiSliced(PoissonSolver):
             wall_time=elapsed_time,
             compute_time=sum(compute_times),
             mpi_comm_time=sum(comm_times),
+            halo_exchange_time=sum(halo_times),
         )
 
         # Gather all per-rank results
         all_perrank = self.comm.gather(per_rank_results, root=0)
+
+        # Store all per-rank results for MLflow logging
+        if self.rank == 0:
+            self.all_per_rank_results = all_perrank
+
+        # Update config with method
+        self.config.method = "mpi_sliced_jacobi"
 
         # Build config and global results on rank 0
         if self.rank == 0:
@@ -91,15 +112,16 @@ class MPIJacobiSliced(PoissonSolver):
                 tolerance=tolerance,
                 max_iter=max_iter,
                 use_numba=self.config.use_numba,
-                num_threads=self.get_num_threads(self.config.use_numba),
-                mpi_ranks=self.size,
+                num_threads=self.config.num_threads,
+                mpi_size=self.config.mpi_size,
             )
 
             max_wall_time = max(pr.wall_time for pr in all_perrank)
             total_compute_time = sum(pr.compute_time for pr in all_perrank)
             total_comm_time = sum(pr.mpi_comm_time for pr in all_perrank)
+            total_halo_time = sum(pr.halo_exchange_time for pr in all_perrank)
 
-            global_results = GlobalResults(
+            self.global_results = GlobalResults(
                 iterations=i + 1,
                 residual_history=residual_history,
                 converged=converged,
@@ -107,16 +129,17 @@ class MPIJacobiSliced(PoissonSolver):
                 wall_time=max_wall_time,
                 compute_time=total_compute_time,
                 mpi_comm_time=total_comm_time,
+                halo_exchange_time=total_halo_time,
             )
         else:
             runtime_config = RuntimeConfig()
-            global_results = GlobalResults()
+            self.global_results = GlobalResults()
 
         # Broadcast to all ranks
         runtime_config = self.comm.bcast(runtime_config, root=0)
-        global_results = self.comm.bcast(global_results, root=0)
+        self.global_results = self.comm.bcast(self.global_results, root=0)
 
-        return u_global, runtime_config, global_results, per_rank_results
+        return u_global, runtime_config, self.global_results, per_rank_results
 
     def _decompose_domain(self, N):
         interior_N = N - 2
@@ -133,34 +156,33 @@ class MPIJacobiSliced(PoissonSolver):
         z_end = z_start + local_N
         return local_N, z_start, z_end
 
-    def _exchange_boundaries(self, u, compute_time_list, comm_time_list):
+    def _exchange_boundaries(self, u, halo_time_list):
         t0 = time.perf_counter()
 
+        # Exchange with lower neighbor
         if self.rank > 0:
-            self._smart_sendrecv(
-                self.comm,
-                sendbuf=u[1, :, :],
+            self.comm.Sendrecv(
+                [u[1, :, :], 1, self.plane_type],
                 dest=self.rank - 1,
                 sendtag=0,
-                recvbuf=u[0, :, :],
+                recvbuf=[u[0, :, :], 1, self.plane_type],
                 source=self.rank - 1,
                 recvtag=1,
             )
 
+        # Exchange with upper neighbor
         if self.rank < self.size - 1:
-            self._smart_sendrecv(
-                self.comm,
-                sendbuf=u[-2, :, :],
+            self.comm.Sendrecv(
+                [u[-2, :, :], 1, self.plane_type],
                 dest=self.rank + 1,
                 sendtag=1,
-                recvbuf=u[-1, :, :],
+                recvbuf=[u[-1, :, :], 1, self.plane_type],
                 source=self.rank + 1,
                 recvtag=0,
             )
 
-        self.comm.Barrier()
         t1 = time.perf_counter()
-        comm_time_list.append(t1 - t0)
+        halo_time_list.append(t1 - t0)
 
     def _gather_solution(self, u_local, N):
         u_global = np.zeros((N, N, N)) if self.rank == 0 else None

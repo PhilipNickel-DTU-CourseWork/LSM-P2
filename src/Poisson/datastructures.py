@@ -12,12 +12,12 @@ class RuntimeConfig:
     N: int = 0
 
     # Specs
-    mpi_ranks: int = 1
+    mpi_size: int = 1
     method: str = ""
 
     # Jacobi Solver
     omega: float = 0.75
-    use_numba: bool = True
+    use_numba: bool = False
     num_threads: int = 1
     max_iter: int = 0
     tolerance: float = 0.0
@@ -34,6 +34,7 @@ class GlobalResults:
     wall_time: float = 0.0
     compute_time: float = 0.0
     mpi_comm_time: float = 0.0
+    halo_exchange_time: float = 0.0
 
 
 
@@ -46,3 +47,4 @@ class PerRankResults:
     wall_time: float = 0.0
     compute_time: float = 0.0
     mpi_comm_time: float = 0.0
+    halo_exchange_time: float = 0.0

@@ -5,7 +5,7 @@ from pathlib import Path
 import pandas as pd
 
 from utils import datatools, cli
-from LSM import (
+from Poisson import (
     MPIJacobiSliced,
     setup_sinusoidal_problem,
     sinusoidal_exact_solution,
@@ -48,17 +48,25 @@ u1, u2, f, h = setup_sinusoidal_problem(N, initial_value=options.value0)
 u_true = sinusoidal_exact_solution(N)
 
 # Create solver instance (MPI sliced decomposition)
-# For numba acceleration, use: solver = MPIJacobiSliced(omega=0.75, verbose=(rank==0), use_numba=True)
-solver = MPIJacobiSliced(omega=0.75, verbose=(rank == 0))
+# For numba acceleration, use: solver = MPIJacobiSliced(omega=0.75, use_numba=True)
+solver = MPIJacobiSliced(omega=0.75)
 
 # Optional: warmup for numba (if use_numba=True)
 # if rank == 0:
 #     solver.warmup(N=10)
 
+# Start MLflow logging (only on rank 0)
+if rank == 0:
+    solver.mlflow_start_log("/Shared/mpi_sliced_poisson_solver", N, N_iter, tolerance)
+
 # Run the solver
 u, runtime_config, global_results, per_rank_results = solver.solve(
     u1, u2, f, h, N_iter, tolerance, u_true=u_true
 )
+
+# End MLflow logging (only on rank 0)
+if rank == 0:
+    solver.mlflow_end_log()
 
 # Only rank 0 prints summary
 if rank == 0:

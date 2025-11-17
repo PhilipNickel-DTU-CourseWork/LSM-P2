@@ -3,14 +3,14 @@ requires = ["setuptools>=69", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "numutils"
+name = "poisson_solver"
 version = "0.1.0"
-description = "Template for University numerical computing projects"
+description = "MPI Poisson 3d solver"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
 authors = [
-    { name = "Your Name", email = "your.email@example.com" }
+    { name = "", email = "your.email@example.com" }
 ]
 
 # All dependencies (runtime, docs, and dev)
@@ -35,6 +35,7 @@ dependencies = [
   "pytest-cov>=4.1.0",
   "numba>=0.62.1",
   "mpi4py>=4.1.1",
+  "mlflow>=3.6.0",
 ]
 
 [tool.setuptools]
@@ -43,8 +44,4 @@ package-dir = {"" = "src"}
 [tool.setuptools.packages.find]
 where = ["src"]
 
-# include = ["mainrepo*"]   # optionally narrow discovery
-
-[tool.setuptools.package-data]
-numutils = ["styles/*.mplstyle"]
 
