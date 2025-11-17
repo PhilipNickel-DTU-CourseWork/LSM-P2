@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass
@@ -27,7 +27,7 @@ class GlobalResults:
     """Global solver results (same for all ranks)."""
     # Convergence info
     iterations: int = 0
-    residual_history: list[float] = []
+    residual_history: list[float] = field(default_factory=list)
     converged: bool = False
     final_error: float = 0.0
     # Global timings

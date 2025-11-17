@@ -7,7 +7,6 @@ domain decomposition. Each MPI rank owns a cubic sub-block of the domain.
 import math
 import time
 import socket
-from datetime import datetime
 import numpy as np
 from mpi4py import MPI
 
@@ -62,7 +61,7 @@ class MPIJacobiCubic(PoissonSolver):
         # Get neighbors
         self.neighbors = self._get_neighbors()
 
-        if self.config.verbose and self.rank == 0:
+        if self.verbose and self.rank == 0:
             print(
                 f"Using {'numba' if self.config.use_numba else 'numpy'} kernel with {self.size} MPI ranks "
                 f"(topology: {dims[0]}x{dims[1]}x{dims[2]})"
@@ -114,6 +113,7 @@ class MPIJacobiCubic(PoissonSolver):
         converged = False
         compute_times = []
         comm_times = []
+        residual_history = []
         t_start = time.perf_counter()
 
         # Main iteration loop
@@ -138,27 +138,28 @@ class MPIJacobiCubic(PoissonSolver):
             global_residual = np.sqrt(global_residual)
             t_comm_end = time.perf_counter()
             comm_times.append(t_comm_end - t_comm_start)
+            residual_history.append(global_residual)
 
             # Check convergence
             if global_residual < tolerance:
                 converged = True
-                if self.config.verbose and self.rank == 0:
+                if self.verbose and self.rank == 0:
                     print(f"Converged at iteration {i + 1} (residual: {global_residual:.2e})")
                 break
 
         elapsed_time = time.perf_counter() - t_start
 
-        if not converged and self.config.verbose and self.rank == 0:
+        if not converged and self.verbose and self.rank == 0:
             print(f"Did not converge after {max_iter} iterations (residual: {global_residual:.2e})")
 
         # Gather solution
         u_global = self._gather_solution(u_local, N)
 
         # Compute error on rank 0 and broadcast
-        final_error = None
+        final_error = 0.0
         if self.rank == 0 and u_true is not None:
-            final_error = self.compute_error(u_global, u_true)
-            if self.config.verbose:
+            final_error = np.linalg.norm(u_global - u_true)
+            if self.verbose:
                 print(f"Final error vs true solution: {final_error:.2e})")
         final_error = self.comm.bcast(final_error, root=0)
 
@@ -178,15 +179,13 @@ class MPIJacobiCubic(PoissonSolver):
         if self.rank == 0:
             runtime_config = RuntimeConfig(
                 N=N,
-                h=h,
                 method="mpi_cubic_jacobi",
                 omega=self.config.omega,
                 tolerance=tolerance,
                 max_iter=max_iter,
                 use_numba=self.config.use_numba,
                 num_threads=self.get_num_threads(self.config.use_numba),
-                mpi_size=self.size,
-                timestamp=datetime.now().isoformat(),
+                mpi_ranks=self.size,
             )
 
             max_wall_time = max(pr.wall_time for pr in all_perrank)
@@ -195,9 +194,9 @@ class MPIJacobiCubic(PoissonSolver):
 
             global_results = GlobalResults(
                 iterations=i + 1,
+                residual_history=residual_history,
                 converged=converged,
-                final_residual=global_residual,
-                final_error=final_error or 0.0,
+                final_error=final_error,
                 wall_time=max_wall_time,
                 compute_time=total_compute_time,
                 mpi_comm_time=total_comm_time,

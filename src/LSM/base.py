@@ -24,6 +24,8 @@ class PoissonSolver:
     """
 
     def __init__(self, **kwargs):
+        # Extract verbose before passing to RuntimeConfig
+        self.verbose = kwargs.pop('verbose', False)
         self.config = RuntimeConfig(**kwargs)
         self._step = self._select_kernel(self.config.use_numba)
 
@@ -42,11 +44,6 @@ class PoissonSolver:
             self._step(u1, u2, f, h, self.config.omega)
             u1, u2 = u2, u1
 
-    def compute_error(self, u, u_ref):
-        """Compute normalized L2 error."""
-        N = u.shape[0]
-        return np.linalg.norm(u - u_ref) / N**3
-
     def get_num_threads(self, use_numba=False):
         """Get number of threads available for parallel execution."""
         if use_numba:
@@ -55,10 +52,10 @@ class PoissonSolver:
         return os.cpu_count() or 1
 
     def _select_kernel(self, use_numba):
-        from .kernels import jacobi_step_numpy, jacobi_step_numba_parallel
+        from .kernels import jacobi_step_numpy, jacobi_step_numba
 
         if use_numba:
-            return jacobi_step_numba_parallel
+            return jacobi_step_numba
         else:
             return jacobi_step_numpy
 

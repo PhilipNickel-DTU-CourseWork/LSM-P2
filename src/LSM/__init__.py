@@ -2,7 +2,7 @@
 
 from .base import PoissonSolver
 from .datastructures import RuntimeConfig, GlobalResults, PerRankResults
-from .kernels import jacobi_step_numpy, jacobi_step_numba_parallel
+from .kernels import jacobi_step_numpy, jacobi_step_numba
 from .sequential import SequentialJacobi
 from .mpi_cubic import MPIJacobiCubic
 from .mpi_sliced import MPIJacobiSliced
@@ -14,7 +14,7 @@ __all__ = [
     "GlobalResults",
     "PerRankResults",
     "jacobi_step_numpy",
-    "jacobi_step_numba_parallel",
+    "jacobi_step_numba",
     "SequentialJacobi",
     "MPIJacobiCubic",
     "MPIJacobiSliced",

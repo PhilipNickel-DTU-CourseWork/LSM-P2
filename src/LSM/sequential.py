@@ -2,9 +2,7 @@
 
 import time
 import socket
-from datetime import datetime
 import numpy as np
-from mpi4py import MPI
 from .base import PoissonSolver
 from .datastructures import RuntimeConfig, GlobalResults, PerRankResults
 
@@ -20,6 +18,7 @@ class SequentialJacobi(PoissonSolver):
         N = u1.shape[0]
         converged = False
         compute_times = []
+        residual_history = []
         t_start = time.perf_counter()
 
         # Main iteration loop
@@ -34,45 +33,44 @@ class SequentialJacobi(PoissonSolver):
             residual = self._step(uold, u, f, h, self.config.omega)
             t_comp_end = time.perf_counter()
             compute_times.append(t_comp_end - t_comp_start)
+            residual_history.append(residual)
 
             # Check convergence
             if residual < tolerance:
                 converged = True
-                if self.config.verbose:
+                if self.verbose:
                     print(f"Converged at iteration {i + 1} (residual: {residual:.2e})")
                 break
 
         elapsed_time = time.perf_counter() - t_start
 
-        if not converged and self.config.verbose:
+        if not converged and self.verbose:
             print(f"Did not converge after {max_iter} iterations (residual: {residual:.2e})")
 
         # Compute error
-        final_error = None
+        final_error = 0.0
         if u_true is not None:
-            final_error = self.compute_error(u, u_true)
-            if self.config.verbose:
+            final_error = np.linalg.norm(u - u_true)
+            if self.verbose:
                 print(f"Final error vs true solution: {final_error:.2e}")
 
         # Build results
         runtime_config = RuntimeConfig(
             N=N,
-            h=h,
             method="sequential_jacobi",
             omega=self.config.omega,
             tolerance=tolerance,
             max_iter=max_iter,
             use_numba=self.config.use_numba,
             num_threads=self.get_num_threads(self.config.use_numba),
-            mpi_size=1,
-            timestamp=datetime.now().isoformat(),
+            mpi_ranks=1,
         )
 
         global_results = GlobalResults(
             iterations=i + 1,
+            residual_history=residual_history,
             converged=converged,
-            final_residual=residual,
-            final_error=final_error or 0.0,
+            final_error=final_error,
             wall_time=elapsed_time,
             compute_time=sum(compute_times),
             mpi_comm_time=0.0,
