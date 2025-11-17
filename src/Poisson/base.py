@@ -31,6 +31,13 @@ class PoissonSolver:
         self.global_results = GlobalResults()
         self.per_rank_results = PerRankResults()
         self.all_per_rank_results = []
+
+        # Runtime accumulation lists
+        self.compute_times = []
+        self.comm_times = []
+        self.halo_times = []
+        self.residual_history = []
+
         if self.config.use_numba:
             self._step = jacobi_step_numba
         else:
@@ -39,6 +46,15 @@ class PoissonSolver:
     def solve(self, u1, u2, f, h, max_iter, tolerance=1e-8, u_true=None):
         """Solve the Poisson problem. Subclasses must override this."""
         raise NotImplementedError("Subclass must implement solve()")
+
+    def _aggregate_timing_results(self, all_per_rank_results):
+        """Aggregate per-rank timing results into global timings."""
+        return {
+            'wall_time': max(pr.wall_time for pr in all_per_rank_results),
+            'compute_time': sum(pr.compute_time for pr in all_per_rank_results),
+            'mpi_comm_time': sum(pr.mpi_comm_time for pr in all_per_rank_results),
+            'halo_exchange_time': sum(pr.halo_exchange_time for pr in all_per_rank_results),
+        }
 
     def warmup(self, N=10):
         """Warmup the solver (trigger JIT compilation)."""

@@ -36,11 +36,13 @@ class MPIJacobiSliced(PoissonSolver):
         # Setup local arrays
         u1_local, u2_local, f_local = self._setup_local_arrays(u1, u2, f, N)
 
+        # Clear runtime accumulation lists
+        self.compute_times.clear()
+        self.comm_times.clear()
+        self.halo_times.clear()
+        self.residual_history.clear()
+
         converged = False
-        compute_times = []
-        comm_times = []
-        halo_times = []
-        residual_history = []
         t_start = time.perf_counter()
 
         # Main iteration loop
@@ -51,21 +53,21 @@ class MPIJacobiSliced(PoissonSolver):
                 u_local, uold_local = u1_local, u2_local
 
             # Exchange boundaries
-            self._exchange_boundaries(uold_local, halo_times)
+            self._exchange_boundaries(uold_local)
 
             # Jacobi step
             t_comp_start = time.perf_counter()
             local_residual = self._step(uold_local, u_local, f_local, h, self.config.omega)
             t_comp_end = time.perf_counter()
-            compute_times.append(t_comp_end - t_comp_start)
+            self.compute_times.append(t_comp_end - t_comp_start)
 
             # Global residual
             t_comm_start = time.perf_counter()
             global_residual = self.comm.allreduce(local_residual**2, op=MPI.SUM)
             global_residual = np.sqrt(global_residual)
             t_comm_end = time.perf_counter()
-            comm_times.append(t_comm_end - t_comm_start)
-            residual_history.append(float(global_residual))
+            self.comm_times.append(t_comm_end - t_comm_start)
+            self.residual_history.append(float(global_residual))
 
             # Check convergence
             if global_residual < tolerance:
@@ -85,12 +87,9 @@ class MPIJacobiSliced(PoissonSolver):
 
         # Build per-rank results
         per_rank_results = PerRankResults(
-            mpi_rank=self.rank,
-            hostname=socket.gethostname(),
-            wall_time=elapsed_time,
-            compute_time=sum(compute_times),
-            mpi_comm_time=sum(comm_times),
-            halo_exchange_time=sum(halo_times),
+            mpi_rank=self.rank, hostname=socket.gethostname(),
+            wall_time=elapsed_time, compute_time=sum(self.compute_times),
+            mpi_comm_time=sum(self.comm_times), halo_exchange_time=sum(self.halo_times),
         )
 
         # Gather all per-rank results
@@ -106,34 +105,18 @@ class MPIJacobiSliced(PoissonSolver):
         # Build config and global results on rank 0
         if self.rank == 0:
             runtime_config = RuntimeConfig(
-                N=N,
-                method="mpi_sliced_jacobi",
-                omega=self.config.omega,
-                tolerance=tolerance,
-                max_iter=max_iter,
-                use_numba=self.config.use_numba,
-                num_threads=self.config.num_threads,
-                mpi_size=self.config.mpi_size,
+                N=N, method="mpi_sliced_jacobi", omega=self.config.omega,
+                tolerance=tolerance, max_iter=max_iter, use_numba=self.config.use_numba,
+                num_threads=self.config.num_threads, mpi_size=self.config.mpi_size,
             )
 
-            max_wall_time = max(pr.wall_time for pr in all_perrank)
-            total_compute_time = sum(pr.compute_time for pr in all_perrank)
-            total_comm_time = sum(pr.mpi_comm_time for pr in all_perrank)
-            total_halo_time = sum(pr.halo_exchange_time for pr in all_perrank)
-
+            timings = self._aggregate_timing_results(all_perrank)
             self.global_results = GlobalResults(
-                iterations=i + 1,
-                residual_history=residual_history,
-                converged=converged,
-                final_error=final_error,
-                wall_time=max_wall_time,
-                compute_time=total_compute_time,
-                mpi_comm_time=total_comm_time,
-                halo_exchange_time=total_halo_time,
+                iterations=i + 1, residual_history=self.residual_history,
+                converged=converged, final_error=final_error, **timings
             )
         else:
-            runtime_config = RuntimeConfig()
-            self.global_results = GlobalResults()
+            runtime_config, self.global_results = RuntimeConfig(), GlobalResults()
 
         # Broadcast to all ranks
         runtime_config = self.comm.bcast(runtime_config, root=0)
@@ -143,20 +126,13 @@ class MPIJacobiSliced(PoissonSolver):
 
     def _decompose_domain(self, N):
         interior_N = N - 2
-        base_size = interior_N // self.size
-        remainder = interior_N % self.size
+        base_size, remainder = divmod(interior_N, self.size)
+        local_N = base_size + (1 if self.rank < remainder else 0)
+        z_start = self.rank * local_N + 1 if self.rank < remainder else \
+                  remainder * (base_size + 1) + (self.rank - remainder) * base_size + 1
+        return local_N, z_start, z_start + local_N
 
-        if self.rank < remainder:
-            local_N = base_size + 1
-            z_start = self.rank * local_N + 1
-        else:
-            local_N = base_size
-            z_start = remainder * (base_size + 1) + (self.rank - remainder) * base_size + 1
-
-        z_end = z_start + local_N
-        return local_N, z_start, z_end
-
-    def _exchange_boundaries(self, u, halo_time_list):
+    def _exchange_boundaries(self, u):
         t0 = time.perf_counter()
 
         # Exchange with lower neighbor
@@ -182,7 +158,7 @@ class MPIJacobiSliced(PoissonSolver):
             )
 
         t1 = time.perf_counter()
-        halo_time_list.append(t1 - t0)
+        self.halo_times.append(t1 - t0)
 
     def _gather_solution(self, u_local, N):
         u_global = np.zeros((N, N, N)) if self.rank == 0 else None
@@ -200,23 +176,17 @@ class MPIJacobiSliced(PoissonSolver):
 
     def _setup_local_arrays(self, u1, u2, f, N):
         local_N, z_start, z_end = self._decompose_domain(N)
-
         local_shape = (local_N + 2, N, N)
-        u1_local = np.zeros(local_shape)
-        u2_local = np.zeros(local_shape)
-        f_local = np.zeros(local_shape)
 
-        u1_local[1:-1, :, :] = u1[z_start:z_end, :, :]
-        u2_local[1:-1, :, :] = u2[z_start:z_end, :, :]
-        f_local[1:-1, :, :] = f[z_start:z_end, :, :]
+        # Initialize and populate arrays
+        locals_arrays = []
+        for arr in [u1, u2, f]:
+            local_arr = np.zeros(local_shape)
+            local_arr[1:-1, :, :] = arr[z_start:z_end, :, :]
+            if self.rank == 0:
+                local_arr[0, :, :] = arr[z_start - 1, :, :]
+            if self.rank == self.size - 1:
+                local_arr[-1, :, :] = arr[z_end, :, :]
+            locals_arrays.append(local_arr)
 
-        if self.rank == 0:
-            u1_local[0, :, :] = u1[z_start - 1, :, :]
-            u2_local[0, :, :] = u2[z_start - 1, :, :]
-            f_local[0, :, :] = f[z_start - 1, :, :]
-        if self.rank == self.size - 1:
-            u1_local[-1, :, :] = u1[z_end, :, :]
-            u2_local[-1, :, :] = u2[z_end, :, :]
-            f_local[-1, :, :] = f[z_end, :, :]
-
-        return u1_local, u2_local, f_local
+        return tuple(locals_arrays)

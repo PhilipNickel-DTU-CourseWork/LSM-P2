@@ -17,8 +17,11 @@ class SequentialJacobi(PoissonSolver):
         """Solve using sequential Jacobi iteration."""
         N = u1.shape[0]
         converged = False
-        compute_times = []
-        residual_history = []
+
+        # Clear runtime accumulation lists
+        self.compute_times.clear()
+        self.residual_history.clear()
+
         t_start = time.perf_counter()
 
         # Main iteration loop
@@ -32,8 +35,8 @@ class SequentialJacobi(PoissonSolver):
             t_comp_start = time.perf_counter()
             residual = self._step(uold, u, f, h, self.config.omega)
             t_comp_end = time.perf_counter()
-            compute_times.append(t_comp_end - t_comp_start)
-            residual_history.append(float(residual))
+            self.compute_times.append(t_comp_end - t_comp_start)
+            self.residual_history.append(float(residual))
 
             # Check convergence
             if residual < tolerance:
@@ -62,27 +65,18 @@ class SequentialJacobi(PoissonSolver):
             num_threads=self.config.num_threads,
         )
 
-        self.global_results = GlobalResults(
-            iterations=i + 1,
-            residual_history=residual_history,
-            converged=converged,
-            final_error=final_error,
-            wall_time=elapsed_time,
-            compute_time=sum(compute_times),
-            mpi_comm_time=0.0,
-            halo_exchange_time=0.0,
-        )
-
         self.per_rank_results = PerRankResults(
-            mpi_rank=0,
-            hostname=socket.gethostname(),
-            wall_time=elapsed_time,
-            compute_time=sum(compute_times),
-            mpi_comm_time=0.0,
-            halo_exchange_time=0.0,
+            mpi_rank=0, hostname=socket.gethostname(), wall_time=elapsed_time,
+            compute_time=sum(self.compute_times), mpi_comm_time=0.0, halo_exchange_time=0.0,
         )
 
-        # Store all per-rank results for MLflow logging (single rank for sequential)
+        # Store all per-rank results and aggregate timings
         self.all_per_rank_results = [self.per_rank_results]
+        timings = self._aggregate_timing_results(self.all_per_rank_results)
+
+        self.global_results = GlobalResults(
+            iterations=i + 1, residual_history=self.residual_history,
+            converged=converged, final_error=final_error, **timings
+        )
 
         return u, runtime_config, self.global_results, self.per_rank_results
