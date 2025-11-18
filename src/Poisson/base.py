@@ -60,10 +60,17 @@ class PoissonSolver:
     # Internal methods
     # ============================================================================
 
-    def _post_solve(self, start_time): 
-    # aggregate timings
-        # MPI gather local timeseries or something 
-        pass 
+    def _post_solve(self, start_time):
+        """Aggregate timing results after solve."""
+        # Calculate wall time
+        if self.rank == 0:
+            wall_time = MPI.Wtime() - start_time
+
+            # Aggregate local timings to global results
+            self.global_results.wall_time = wall_time
+            self.global_results.compute_time = sum(self.global_timeseries.compute_times)
+            self.global_results.mpi_comm_time = sum(self.global_timeseries.mpi_comm_times)
+            self.global_results.halo_exchange_time = sum(self.global_timeseries.halo_exchange_times) 
         
 
 

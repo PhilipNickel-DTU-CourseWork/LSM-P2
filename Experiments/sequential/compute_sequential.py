@@ -27,24 +27,18 @@ tolerance: float = options.tolerance
 In the below code, we'll have the axes aligned as z, y, x.
 """
 
-# Create solver instance (using pure numpy version)
-# For numba acceleration, use: solver = SequentialJacobi(omega=0.75, use_numba=True)
-solver = SequentialJacobi(omega=0.75)
-
-# Set up the test problem
-u1, u2, f, h = solver.setup_problem(N, initial_value=options.value0)
-
-# Get the exact solution for validation
-u_true = solver.get_exact_solution(N)
+# Create solver instance with all configuration
+# For numba acceleration, use: use_numba=True
+solver = SequentialJacobi(N=N, omega=0.75, max_iter=N_iter, tolerance=tolerance)
 
 # Optional: warmup for numba (if use_numba=True)
 # solver.warmup(N=10)
 
 # Start MLflow logging
-#solver.mlflow_start_log("/Shared/sequential_poisson_solver", N, N_iter, tolerance)
+#solver.mlflow_start_log("/Shared/sequential_poisson_solver")
 
 # Run the solver
-solver.solve(u1, u2, f, h, N_iter, tolerance, u_true=u_true)
+solver.solve()
 
 # End MLflow logging
 #solver.mlflow_end_log()
@@ -54,4 +48,4 @@ solver.print_summary()
 
 # Save results
 #data_dir = datatools.get_data_dir()
-#solver.save_results(data_dir, N, method, output_name=options.output)
+#solver.save_results(data_dir, method, output_name=options.output)

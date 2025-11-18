@@ -1,7 +1,7 @@
 """Large Scale Modeling package."""
 
 from .base import PoissonSolver
-from .datastructures import RuntimeConfig, GlobalResults, PerRankResults
+from .datastructures import GlobalConfig, GlobalFields, LocalFields, GlobalResults, LocalResults, TimeSeriesLocal, TimeSeriesGlobal
 from .kernels import jacobi_step_numpy, jacobi_step_numba
 from .sequential import SequentialJacobi
 from .mpi_sliced import MPIJacobiSliced
@@ -9,9 +9,13 @@ from .problems import create_grid_3d, sinusoidal_exact_solution, sinusoidal_sour
 
 __all__ = [
     "PoissonSolver",
-    "RuntimeConfig",
+    "GlobalConfig",
+    "GlobalFields",
+    "LocalFields",
     "GlobalResults",
-    "PerRankResults",
+    "LocalResults",
+    "TimeSeriesLocal",
+    "TimeSeriesGlobal",
     "jacobi_step_numpy",
     "jacobi_step_numba",
     "SequentialJacobi",

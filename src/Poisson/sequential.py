@@ -3,8 +3,9 @@
 import time
 import socket
 import numpy as np
+from mpi4py import MPI
 from .base import PoissonSolver
-from .datastructures import RuntimeConfig, GlobalResults, PerRankResults
+from .datastructures import LocalResults
 
 
 class SequentialJacobi(PoissonSolver):
@@ -14,21 +15,17 @@ class SequentialJacobi(PoissonSolver):
         super().__init__(**kwargs)
         self.config.method = "sequential"
 
-
-
     def method_solve(self):
         """Solve using sequential Jacobi iteration.
 
         Results are stored in solver instance variables and nothing is returned.
         """
-        super().method_solve()
-
-
-        # Clear runtime accumulation lists
-        self.compute_times.clear()
-        self.residual_history.clear()
-
-        t_start = time.perf_counter()
+        # Get references to fields
+        u1 = self.global_fields.u1
+        u2 = self.global_fields.u2
+        f = self.global_fields.f
+        h = self.global_fields.h
+        u_exact = self.global_fields.u_exact
 
         # Main iteration loop
         for i in range(self.config.max_iter):
@@ -38,33 +35,26 @@ class SequentialJacobi(PoissonSolver):
                 u, uold = u1, u2
 
             # Jacobi step
-            t_comp_start = time.perf_counter()
+            t_comp_start = MPI.Wtime()
             residual = self._step(uold, u, f, h, self.config.omega)
-            t_comp_end = time.perf_counter()
+            t_comp_end = MPI.Wtime()
 
-            self.compute_times.append(t_comp_end - t_comp_start)
-            self.residual_history.append(float(residual))
+            self.global_timeseries.compute_times.append(t_comp_end - t_comp_start)
+            self.global_timeseries.residual_history.append(float(residual))
 
             # Check convergence
             if residual < self.config.tolerance:
                 self.global_results.converged = True
+                self.global_results.iterations = i + 1
                 break
-
-        elapsed_time = time.perf_counter() - t_start
+        else:
+            # Max iterations reached
+            self.global_results.iterations = self.config.max_iter
 
         # Compute error
-        final_error = float(np.linalg.norm(u - self.problem.u_exact))
+        self.global_results.final_error = float(np.linalg.norm(u - u_exact))
 
-               
-
-        # Store all per-rank results and aggregate timings
-        self.all_per_rank_results = [self.per_rank_results]
-        timings = self._aggregate_timing_results(self.all_per_rank_results)
-
-        self.global_results = GlobalResults(
-            iterations=i + 1, residual_history=self.residual_history,
-            converged=converged, final_error=final_error, **timings
-        )
-
-        # Store solution grid
-        self.u = u
+        # Store final solution in u1
+        if self.global_results.iterations % 2 == 0:
+            self.global_fields.u1[:] = u2
+        # else: solution is already in u1

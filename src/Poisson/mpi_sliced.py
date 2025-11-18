@@ -5,7 +5,7 @@ import socket
 import numpy as np
 from mpi4py import MPI
 from .base import PoissonSolver
-from .datastructures import RuntimeConfig, GlobalResults, PerRankResults
+from .datastructures import LocalResults
 
 
 class MPIJacobiSliced(PoissonSolver):
