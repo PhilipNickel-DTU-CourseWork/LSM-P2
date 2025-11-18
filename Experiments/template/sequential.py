@@ -43,7 +43,8 @@ parser.add_argument(
 
 parser.add_argument(
     "--plot_convergence",
-    action="store_true",
+    type = str,
+    default = "Experiments/template/output",
     help="Plot the convergence of the residual over iterations.",
 )
 
@@ -122,7 +123,7 @@ def validate(u: np.ndarray, u_true: np.ndarray) -> float:
 
     return diff_true
 
-def plot_convergence(diff_true, type1: str):
+def plot_convergence(diff_true, type1: str, output_dir: str):
     """Plot the convergence of the residual over iterations."""
     from matplotlib import pyplot as plt
 
@@ -132,12 +133,12 @@ def plot_convergence(diff_true, type1: str):
     if type1 == "residual":
         plt.title("Convergence to true solution")
         plt.grid(True)
-        plt.savefig("convergence_true.png")
+        plt.savefig(f"{output_dir}/convergence_true.png")
         plt.close()
     else:
         plt.title("Convergence of difference between steps")
         plt.grid(True)
-        plt.savefig("convergence_step.png")
+        plt.savefig(f"{output_dir}/convergence_step.png")
         plt.close()
 # Retrieve the method that we'll use for solving the Poisson problem
 step = globals()[f"step_{method}"]
@@ -186,11 +187,13 @@ t1 = time()
 iter_run = i + 1
 print("time = ", t1 - t0)
 print(f"iterations = {iter_run}")
+print(f"final step diff = {diff_step[-1]}")
+print(f"final true diff = {diff_true[-1]}")
 
 if options.save_slice:
     axis, pos, filename = options.save_slice
     plot_slice(filename, axis, pos, u)
 
 if options.plot_convergence:
-    plot_convergence(diff_true, "residual")
-    plot_convergence(diff_step, "step")
+    plot_convergence(diff_true, "residual", options.plot_convergence)
+    plot_convergence(diff_step, "step", options.plot_convergence)
